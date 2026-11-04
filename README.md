@@ -17,9 +17,12 @@ Requer Python 3.10 ou superior.
 ```bash
 python -m venv .venv
 source .venv/Scripts/activate   # Windows com Git Bash
+# .venv\Scripts\Activate.ps1    # Windows com PowerShell
 pip install -e ".[dev]"
 pytest
 ```
+
+Se o projeto estiver em uma pasta sincronizada, como o OneDrive, crie o ambiente virtual fora dela para evitar sincronização pesada.
 
 ## Uso responsável
 
