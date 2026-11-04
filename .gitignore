@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Segredos
+.env
+.env.*
+
+# Arquivos baixados
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.m4a
