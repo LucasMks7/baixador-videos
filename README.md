@@ -2,7 +2,7 @@
 
 Ferramenta minimalista para baixar um vídeo em MP4 ou extrair o áudio em MP3 ou WAV.
 
-> **Status:** em desenvolvimento. Por enquanto, só a estrutura do projeto e o comando `baixar --version` funcionam. O download ainda não foi implementado.
+> **Status:** em desenvolvimento. Por enquanto, o comando `baixar <link>` apenas valida o link e avisa quando ele é inválido. O download ainda não foi implementado.
 
 ## Uso previsto
 
