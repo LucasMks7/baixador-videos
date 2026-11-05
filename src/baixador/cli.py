@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 
 from baixador import __version__
-from baixador.download import FalhaNoDownload, baixar_mp4
+from baixador.download import FORMATO_PADRAO, FORMATOS, FalhaNoDownload, baixar
 from baixador.validacao import LinkInvalido, validar_link
 
 CODIGO_FALHA_NO_DOWNLOAD = 1
@@ -22,9 +22,15 @@ def usar_utf8_na_saida() -> None:
 def criar_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="baixar",
-        description="Baixa vídeos em MP4 na pasta atual.",
+        description="Baixa um vídeo em MP4 ou extrai o áudio em MP3 ou WAV, na pasta atual.",
     )
     parser.add_argument("link", help="link do vídeo, começando com http:// ou https://")
+    parser.add_argument(
+        "--formato",
+        choices=FORMATOS,
+        default=FORMATO_PADRAO,
+        help="formato do arquivo final (padrão: %(default)s)",
+    )
     parser.add_argument(
         "--version",
         action="version",
@@ -44,7 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return CODIGO_ENTRADA_INVALIDA
 
     try:
-        baixar_mp4(link)
+        baixar(link, argumentos.formato)
     except FalhaNoDownload as erro:
         print(f"baixar: erro: {erro}", file=sys.stderr)
         return CODIGO_FALHA_NO_DOWNLOAD

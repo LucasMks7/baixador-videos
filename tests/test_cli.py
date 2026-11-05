@@ -25,22 +25,42 @@ def test_sem_link_termina_com_erro_de_uso(capsys):
     assert "link" in capsys.readouterr().err
 
 
-def test_link_valido_baixa_o_video_e_termina_sem_erro(capsys, monkeypatch):
-    baixados = []
-    monkeypatch.setattr(cli, "baixar_mp4", baixados.append)
+@pytest.fixture
+def baixados(monkeypatch):
+    """Troca o download por um dublê e devolve os pedidos recebidos."""
+    pedidos = []
+    monkeypatch.setattr(
+        cli, "baixar", lambda link, formato: pedidos.append((link, formato))
+    )
+    return pedidos
 
+
+def test_link_valido_baixa_em_mp4_e_termina_sem_erro(capsys, baixados):
     assert main(["  https://exemplo.com/video\n"]) == 0
 
     capturado = capsys.readouterr()
-    assert baixados == ["https://exemplo.com/video"]
+    assert baixados == [("https://exemplo.com/video", "mp4")]
     assert "concluído" in capturado.out
     assert capturado.err == ""
 
 
-def test_link_invalido_mostra_erro_e_nao_tenta_baixar(capsys, monkeypatch):
-    baixados = []
-    monkeypatch.setattr(cli, "baixar_mp4", baixados.append)
+@pytest.mark.parametrize("formato", ["mp4", "mp3", "wav"])
+def test_formato_escolhido_chega_ao_download(baixados, formato):
+    assert main(["https://exemplo.com/video", "--formato", formato]) == 0
 
+    assert baixados == [("https://exemplo.com/video", formato)]
+
+
+def test_formato_desconhecido_termina_com_erro_de_uso(capsys, baixados):
+    with pytest.raises(SystemExit) as saida:
+        main(["https://exemplo.com/video", "--formato", "flac"])
+
+    assert saida.value.code == 2
+    assert baixados == []
+    assert "--formato" in capsys.readouterr().err
+
+
+def test_link_invalido_mostra_erro_e_nao_tenta_baixar(capsys, baixados):
     assert main(["exemplo.com/video"]) == 2
 
     capturado = capsys.readouterr()
@@ -51,10 +71,10 @@ def test_link_invalido_mostra_erro_e_nao_tenta_baixar(capsys, monkeypatch):
 
 
 def test_falha_no_download_mostra_erro_e_termina_com_codigo_1(capsys, monkeypatch):
-    def falhar(link):
+    def falhar(link, formato):
         raise FalhaNoDownload("O yt-dlp terminou com o código 1.")
 
-    monkeypatch.setattr(cli, "baixar_mp4", falhar)
+    monkeypatch.setattr(cli, "baixar", falhar)
 
     assert main(["https://exemplo.com/video"]) == 1
 
@@ -74,4 +94,4 @@ def test_saida_redirecionada_usa_utf8():
     )
 
     assert resultado.returncode == 0
-    assert "Baixa vídeos".encode("utf-8") in resultado.stdout
+    assert "Baixa um vídeo".encode("utf-8") in resultado.stdout
