@@ -2,7 +2,19 @@
 
 Ferramenta minimalista para baixar um vídeo em MP4 ou extrair o áudio em MP3 ou WAV.
 
-> **Status:** em desenvolvimento. Por enquanto, o comando `baixar <link>` apenas valida o link e avisa quando ele é inválido. O download ainda não foi implementado.
+> **Status:** em desenvolvimento. Por enquanto, o comando baixa apenas em MP4 e salva na pasta atual. A extração de áudio e a escolha da pasta ainda não foram implementadas.
+
+## Requisitos
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) e [ffmpeg](https://ffmpeg.org/) instalados e disponíveis no PATH.
+
+## Uso atual
+
+```text
+baixar <link>
+```
+
+O comando baixa um único vídeo. Se o link for de uma playlist, apenas o primeiro item é baixado.
 
 ## Uso previsto
 
