@@ -30,6 +30,15 @@ No PowerShell, um caminho com espaços não pode terminar em `\`: use `"C:\Minha
 
 O comando baixa um único item. Se o link for de uma playlist, apenas o primeiro é baixado.
 
+Durante o download, o terminal mostra a porcentagem, a velocidade e o tempo restante. Um vídeo em que imagem e som são baixados separadamente mostra a porcentagem duas vezes, uma para cada parte. `Ctrl+C` cancela o download e deixa o arquivo parcial (`.part`) na pasta de destino.
+
+| Código de saída | Significado |
+| --- | --- |
+| `0` | Download concluído |
+| `1` | O download falhou (rede, vídeo indisponível, acesso negado etc.) |
+| `2` | Entrada inválida (link, pasta ou opções) |
+| `130` | Cancelado com `Ctrl+C` |
+
 ## Desenvolvimento
 
 Requer Python 3.10 ou superior.

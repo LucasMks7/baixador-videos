@@ -150,3 +150,25 @@ def test_falta_de_permissao_vira_pasta_invalida(tmp_path, monkeypatch):
 
     with pytest.raises(PastaInvalida, match="acesso negado"):
         preparar_pasta(str(tmp_path / "nova"))
+
+
+def test_erro_do_sistema_mostra_so_o_motivo(tmp_path, monkeypatch):
+    def falhar(*args, **kwargs):
+        raise OSError(3, "Caminho não encontrado", "Q:\\")
+
+    monkeypatch.setattr(Path, "mkdir", falhar)
+
+    with pytest.raises(PastaInvalida) as erro:
+        preparar_pasta(str(tmp_path / "nova"))
+
+    assert str(erro.value).endswith("Caminho não encontrado.")
+
+
+def test_aspa_no_caminho_ganha_dica_sobre_a_barra_final(tmp_path, monkeypatch):
+    def falhar(*args, **kwargs):
+        raise OSError(22, "Nome inválido")
+
+    monkeypatch.setattr(Path, "mkdir", falhar)
+
+    with pytest.raises(PastaInvalida, match="não o termine com"):
+        preparar_pasta(str(tmp_path / 'Minha Pasta"'))

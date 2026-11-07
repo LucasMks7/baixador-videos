@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 
 ESQUEMAS_ACEITOS = {"http", "https"}
 DOMINIO = re.compile(r"[\w-]+(\.[\w-]+)+")
+# No PowerShell, "C:\Minha Pasta\" chega ao programa com a aspa dentro do caminho.
+DICA_ASPAS = ' Se o caminho tiver espaços, não o termine com "\\".'
 
 
 class LinkInvalido(ValueError):
@@ -60,6 +62,11 @@ def preparar_pasta(pasta: str) -> Path:
         ) from erro
     # O expanduser levanta RuntimeError quando não encontra o usuário de "~nome".
     except (OSError, RuntimeError) as erro:
-        raise PastaInvalida(f"Não foi possível usar a pasta {pasta}: {erro}") from erro
+        # O strerror traz só o motivo, sem o "[WinError 3]" e o caminho repetido.
+        motivo = getattr(erro, "strerror", None) or erro
+        dica = DICA_ASPAS if '"' in pasta else ""
+        raise PastaInvalida(
+            f"Não foi possível usar a pasta {pasta}: {motivo}.{dica}"
+        ) from erro
 
     return caminho

@@ -6,7 +6,13 @@ import pytest
 
 from baixador import __version__, cli
 from baixador.cli import main
-from baixador.download import QUALIDADES, FalhaNoDownload
+from baixador.download import (
+    ETAPA_BAIXANDO,
+    ETAPA_PROCESSANDO,
+    QUALIDADES,
+    FalhaNoDownload,
+    Progresso,
+)
 
 
 def test_version_mostra_a_versao_do_pacote(capsys):
@@ -29,7 +35,11 @@ def test_sem_link_termina_com_erro_de_uso(capsys):
 def baixados(monkeypatch):
     """Troca o download por um dublê e devolve os pedidos recebidos."""
     pedidos = []
-    monkeypatch.setattr(cli, "baixar", lambda *pedido: pedidos.append(pedido))
+
+    def registrar(*pedido, **opcoes):
+        pedidos.append(pedido)
+
+    monkeypatch.setattr(cli, "baixar", registrar)
     return pedidos
 
 
@@ -39,7 +49,7 @@ def test_link_valido_baixa_com_os_padroes_e_termina_sem_erro(capsys, baixados):
     capturado = capsys.readouterr()
     assert baixados == [("https://exemplo.com/video", "mp4", "melhor", None)]
     assert "concluído" in capturado.out
-    assert capturado.err == ""
+    assert "erro" not in capturado.err
 
 
 @pytest.mark.parametrize("formato", ["mp4", "mp3", "wav"])
@@ -128,7 +138,7 @@ def test_link_invalido_mostra_erro_e_nao_tenta_baixar(capsys, baixados):
 
 
 def test_falha_no_download_mostra_erro_e_termina_com_codigo_1(capsys, monkeypatch):
-    def falhar(*pedido):
+    def falhar(*pedido, **opcoes):
         raise FalhaNoDownload("O yt-dlp terminou com o código 1.")
 
     monkeypatch.setattr(cli, "baixar", falhar)
@@ -136,8 +146,85 @@ def test_falha_no_download_mostra_erro_e_termina_com_codigo_1(capsys, monkeypatc
     assert main(["https://exemplo.com/video"]) == 1
 
     capturado = capsys.readouterr()
-    assert capturado.err == "baixar: erro: O yt-dlp terminou com o código 1.\n"
+    assert capturado.err.endswith("baixar: erro: O yt-dlp terminou com o código 1.\n")
     assert capturado.out == ""
+
+
+def test_ctrl_c_mostra_cancelamento_e_termina_com_codigo_130(capsys, monkeypatch):
+    def interromper(*pedido, **opcoes):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "baixar", interromper)
+
+    assert main(["https://exemplo.com/video"]) == 130
+
+    capturado = capsys.readouterr()
+    assert "cancelado" in capturado.err
+    assert "concluído" not in capturado.out
+
+
+def test_mostra_o_caminho_do_arquivo_final(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "baixar", lambda *pedido, **opcoes: "C:/Videos/aula.mp4")
+
+    assert main(["https://exemplo.com/video"]) == 0
+
+    assert "Arquivo salvo em: C:/Videos/aula.mp4" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("progresso", "esperado"),
+    [
+        (
+            Progresso(ETAPA_BAIXANDO, 42.26, "1.28MiB/s", "00:12"),
+            "Baixando  42.3% | 1.28MiB/s | restam 00:12",
+        ),
+        (Progresso(ETAPA_BAIXANDO, 100.0), "Baixando 100.0%"),
+        (Progresso(ETAPA_BAIXANDO), "Baixando"),
+        (Progresso(ETAPA_PROCESSANDO), "Processando o arquivo..."),
+    ],
+)
+def test_formata_o_progresso(progresso, esperado):
+    assert cli.formatar_progresso(progresso) == esperado
+
+
+def baixar_avisando_progresso(*pedido, ao_progredir, **opcoes):
+    ao_progredir(Progresso(ETAPA_BAIXANDO, 50.0))
+
+
+def test_progresso_aparece_no_terminal_na_mesma_linha(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "baixar", baixar_avisando_progresso)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+
+    assert main(["https://exemplo.com/video"]) == 0
+
+    assert "\rBaixando  50.0%" in capsys.readouterr().err
+
+
+def test_progresso_nao_aparece_na_saida_redirecionada(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "baixar", baixar_avisando_progresso)
+
+    assert main(["https://exemplo.com/video"]) == 0
+
+    assert "Baixando" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argumentos", "esperado"),
+    [
+        ([], "falta informar: link"),
+        (["https://exemplo.com", "--formato", "flac"], "valor inválido para --formato"),
+        (["https://exemplo.com", "--pasta"], "a opção --pasta precisa de um valor"),
+        (["https://exemplo.com", "--xyz"], "opção desconhecida: --xyz"),
+    ],
+)
+def test_erros_de_uso_saem_em_portugues(capsys, argumentos, esperado):
+    with pytest.raises(SystemExit) as saida:
+        main(argumentos)
+
+    assert saida.value.code == 2
+    erro = capsys.readouterr().err
+    assert erro.startswith(f"baixar: erro: {esperado}")
+    assert "--help" in erro
 
 
 def test_saida_redirecionada_usa_utf8():
