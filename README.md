@@ -2,27 +2,33 @@
 
 Ferramenta minimalista para baixar um vídeo em MP4 ou extrair o áudio em MP3 ou WAV.
 
-> **Status:** em desenvolvimento. Por enquanto, o comando salva sempre na pasta atual. A escolha da qualidade e da pasta ainda não foi implementada.
+> **Status:** em desenvolvimento.
 
 ## Requisitos
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) e [ffmpeg](https://ffmpeg.org/), com o ffprobe que o acompanha, instalados e disponíveis no PATH.
 
-## Uso atual
+## Uso
 
 ```text
-baixar <link>                  # vídeo em MP4
-baixar <link> --formato mp3    # apenas o áudio, em MP3
-baixar <link> --formato wav    # apenas o áudio, em WAV
-```
-
-O comando baixa um único item. Se o link for de uma playlist, apenas o primeiro é baixado.
-
-## Uso previsto
-
-```text
+baixar <link>                                # vídeo em MP4, na melhor qualidade
+baixar <link> --qualidade 720                # vídeo em MP4, até 720p
+baixar <link> --formato mp3                  # apenas o áudio, em MP3
+baixar <link> --formato wav                  # apenas o áudio, em WAV
 baixar <link> --formato mp3 --pasta "C:\Musicas"
 ```
+
+| Opção | Valores | Padrão |
+| --- | --- | --- |
+| `--formato` | `mp4`, `mp3`, `wav` | `mp4` |
+| `--qualidade` | `melhor`, `1080`, `720`, `480`, `360` (apenas em MP4) | `melhor` |
+| `--pasta` | qualquer caminho; a pasta é criada se não existir | a pasta atual |
+
+`--qualidade` é um limite: o comando baixa a maior resolução até o valor pedido. Se o vídeo só existir em resoluções maiores, baixa a menor delas.
+
+No PowerShell, um caminho com espaços não pode terminar em `\`: use `"C:\Minhas Musicas"`, e não `"C:\Minhas Musicas\"`.
+
+O comando baixa um único item. Se o link for de uma playlist, apenas o primeiro é baixado.
 
 ## Desenvolvimento
 

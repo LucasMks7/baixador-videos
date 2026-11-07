@@ -1,6 +1,13 @@
+from pathlib import Path
+
 import pytest
 
-from baixador.validacao import LinkInvalido, validar_link
+from baixador.validacao import (
+    LinkInvalido,
+    PastaInvalida,
+    preparar_pasta,
+    validar_link,
+)
 
 
 @pytest.mark.parametrize(
@@ -83,3 +90,63 @@ def test_recusa_dominio_invalido(link):
 def test_recusa_link_malformado(link):
     with pytest.raises(LinkInvalido, match="malformado"):
         validar_link(link)
+
+
+def test_pasta_existente_e_mantida_com_o_conteudo(tmp_path):
+    arquivo = tmp_path / "antigo.txt"
+    arquivo.touch()
+
+    assert preparar_pasta(str(tmp_path)) == tmp_path.resolve()
+    assert arquivo.exists()
+
+
+def test_cria_pasta_com_as_intermediarias(tmp_path):
+    destino = tmp_path / "a" / "b"
+
+    assert preparar_pasta(str(destino)) == destino.resolve()
+    assert destino.is_dir()
+
+
+def test_caminho_relativo_vira_absoluto(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    assert preparar_pasta("nova") == (tmp_path / "nova").resolve()
+
+
+def test_til_vira_a_pasta_do_usuario(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    assert preparar_pasta("~/nova") == (tmp_path / "nova").resolve()
+
+
+@pytest.mark.parametrize("pasta", ["", "   "])
+def test_recusa_pasta_vazia(pasta):
+    with pytest.raises(PastaInvalida, match="vazia"):
+        preparar_pasta(pasta)
+
+
+def test_recusa_caminho_que_e_um_arquivo(tmp_path):
+    arquivo = tmp_path / "arquivo.txt"
+    arquivo.touch()
+
+    with pytest.raises(PastaInvalida, match="onde deveria haver uma pasta"):
+        preparar_pasta(str(arquivo))
+
+
+def test_recusa_pasta_dentro_de_um_arquivo(tmp_path):
+    arquivo = tmp_path / "arquivo.txt"
+    arquivo.touch()
+
+    with pytest.raises(PastaInvalida, match="onde deveria haver uma pasta"):
+        preparar_pasta(str(arquivo / "sub"))
+
+
+def test_falta_de_permissao_vira_pasta_invalida(tmp_path, monkeypatch):
+    def negar(*args, **kwargs):
+        raise PermissionError("acesso negado")
+
+    monkeypatch.setattr(Path, "mkdir", negar)
+
+    with pytest.raises(PastaInvalida, match="acesso negado"):
+        preparar_pasta(str(tmp_path / "nova"))
