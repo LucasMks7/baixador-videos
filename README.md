@@ -1,5 +1,7 @@
 # Baixador de vídeos
 
+[![Testes](https://github.com/LucasMks7/baixador-videos/actions/workflows/testes.yml/badge.svg)](https://github.com/LucasMks7/baixador-videos/actions/workflows/testes.yml)
+
 Ferramenta minimalista para baixar um vídeo em MP4 ou extrair o áudio em MP3 ou WAV.
 
 > **Status:** em desenvolvimento.
