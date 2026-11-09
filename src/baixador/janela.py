@@ -104,7 +104,7 @@ def executar(
 class Janela:
     """Monta os campos e mantém a janela respondendo enquanto o download roda."""
 
-    def __init__(self, raiz: tk.Tk):
+    def __init__(self, raiz: tk.Tk | tk.Toplevel):
         self.raiz = raiz
         # O Tkinter só pode ser usado pela thread que o criou. A thread de trabalho
         # deixa as mensagens nesta fila, e a janela as lê de tempos em tempos.

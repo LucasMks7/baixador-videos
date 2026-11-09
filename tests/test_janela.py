@@ -156,19 +156,31 @@ def test_executar_avisa_a_falha_em_vez_de_levantar(monkeypatch, tmp_path, erro, 
 # --- Janela de verdade: precisa de uma tela, então é pulada no Linux do CI. ---
 
 
-@pytest.fixture
-def janela(monkeypatch, tmp_path):
-    monkeypatch.setattr(modulo, "pasta_inicial", lambda: tmp_path)
+@pytest.fixture(scope="session")
+def tk_da_sessao():
+    """Um único Tk para todos os testes.
+
+    Criar e destruir vários em seguida falha de vez em quando no Windows, e o
+    teste seria pulado como se não houvesse tela.
+    """
     try:
         raiz = tk.Tk()
     except tk.TclError:
         pytest.skip("não há tela para abrir a janela")
     raiz.withdraw()
-    yield Janela(raiz)
-    try:
-        raiz.destroy()
-    except tk.TclError:
-        pass  # O teste já fechou a janela.
+    yield raiz
+    raiz.destroy()
+
+
+@pytest.fixture
+def janela(monkeypatch, tmp_path, tk_da_sessao):
+    monkeypatch.setattr(modulo, "pasta_inicial", lambda: tmp_path)
+    # Cada teste recebe uma janela filha nova, que pode ser fechada à vontade.
+    topo = tk.Toplevel(tk_da_sessao)
+    topo.withdraw()
+    yield Janela(topo)
+    if topo.winfo_exists():
+        topo.destroy()
 
 
 def esperar_o_fim(janela):
