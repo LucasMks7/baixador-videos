@@ -46,6 +46,10 @@ MODELO_ARQUIVO = f"after_move:{MARCA_ARQUIVO}%(filepath)s"
 # O que o yt-dlp escreve quando ainda não sabe o valor.
 VALORES_DESCONHECIDOS = ("NA", "Unknown")
 
+# Sem isto, a janela abriria um terminal preto a cada download no Windows.
+# A constante só existe no Windows; nos outros sistemas, 0 não muda nada.
+SEM_JANELA_DE_TERMINAL = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 class FalhaNoDownload(RuntimeError):
     """O download não pôde ser iniciado ou não terminou com sucesso."""
@@ -156,6 +160,7 @@ def baixar(
         stderr=subprocess.STDOUT,
         encoding="utf-8",
         errors="replace",
+        creationflags=SEM_JANELA_DE_TERMINAL,
     ) as processo:
         try:
             for linha in processo.stdout:

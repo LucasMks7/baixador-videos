@@ -41,6 +41,14 @@ Durante o download, o terminal mostra a porcentagem, a velocidade e o tempo rest
 | `2` | Entrada inválida (link, pasta ou opções) |
 | `130` | Cancelado com `Ctrl+C` |
 
+## Janela
+
+```text
+baixar-janela
+```
+
+Abre uma janela com os mesmos campos da linha de comando: link, formato, qualidade e pasta de destino, que começa na pasta Downloads. A janela usa o mesmo código de download do comando `baixar` e continua respondendo enquanto o download acontece.
+
 ## Desenvolvimento
 
 Requer Python 3.10 ou superior.
