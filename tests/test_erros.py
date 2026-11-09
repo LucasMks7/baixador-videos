@@ -1,6 +1,6 @@
 import pytest
 
-from baixador.erros import traduzir_erro
+from baixador.erros import atualizar_pode_resolver, traduzir_erro
 
 
 @pytest.mark.parametrize(
@@ -50,3 +50,36 @@ def test_erro_desconhecido_mantem_o_texto_original():
     assert traduzir_erro(linha) == (
         "O yt-dlp falhou: [youtube:tab] PL1: Unable to download API page: HTTP Error 400"
     )
+
+
+@pytest.mark.parametrize(
+    "linha",
+    [
+        # Sintomas vistos de verdade com um yt-dlp de três meses.
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+        "ERROR: [youtube] abc: This video is unavailable",
+        "ERROR: [youtube] abc: Sign in to confirm you're not a bot",
+        "ERROR: Unsupported URL: https://www.example.com/",
+        "ERROR: [youtube] abc: Requested format is not available",
+        # Erro desconhecido: na dúvida, vale tentar.
+        "ERROR: [youtube] abc: Unable to extract player response",
+    ],
+)
+def test_erros_que_uma_versao_nova_pode_resolver(linha):
+    assert atualizar_pode_resolver(linha)
+
+
+@pytest.mark.parametrize(
+    "linha",
+    [
+        "ERROR: [x] abc: HTTP Error 429: Too Many Requests",
+        "ERROR: [x] abc: HTTP Error 503: Service Unavailable",
+        "ERROR: [x] abc: This video is DRM protected",
+        "ERROR: unable to write data: [Errno 28] No space left on device",
+        "ERROR: unable to open: [Errno 13] Permission denied: 'a.mp4'",
+        "ERROR: [generic] x: Unable to download webpage: Failed to resolve 'a.invalid' "
+        "([Errno 11001] getaddrinfo failed)",
+    ],
+)
+def test_erros_que_atualizar_nao_resolve(linha):
+    assert not atualizar_pode_resolver(linha)

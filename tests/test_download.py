@@ -6,6 +6,7 @@ import pytest
 
 from baixador import download
 from baixador.download import (
+    ETAPA_ATUALIZANDO,
     ETAPA_BAIXANDO,
     ETAPA_PROCESSANDO,
     FORMATOS,
@@ -21,6 +22,7 @@ from baixador.download import (
 LINK = "https://exemplo.com/video"
 
 encerrar_de_verdade = download.encerrar
+atualizar_de_verdade = download.atualizar_yt_dlp
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +34,26 @@ def encerrar_sem_taskkill(monkeypatch):
 @pytest.fixture
 def programas_instalados(monkeypatch):
     monkeypatch.setattr(download.shutil, "which", lambda programa: programa)
+
+
+@pytest.fixture(autouse=True)
+def atualizacoes(monkeypatch):
+    """Impede a atualização de verdade e devolve quantas vezes ela foi pedida.
+
+    Por padrão, a versão não muda. Um teste simula a atualização que deu certo
+    colocando True em atualizacoes.resultado.
+    """
+
+    class Atualizacoes:
+        resultado = False
+        pedidos = 0
+
+    def atualizar():
+        Atualizacoes.pedidos += 1
+        return Atualizacoes.resultado
+
+    monkeypatch.setattr(download, "atualizar_yt_dlp", atualizar)
+    return Atualizacoes
 
 
 class ProcessoFalso:
@@ -332,3 +354,144 @@ def test_encerrar_leva_tambem_os_processos_filhos():
     # O filho herdou a saída do pai: a leitura só termina quando os dois morrem.
     # Com o filho vivo, isto estouraria o tempo.
     processo.communicate(timeout=10)
+
+
+ERRO_403 = "ERROR: unable to download video data: HTTP Error 403: Forbidden\n"
+
+
+def simular_execucoes(monkeypatch, *execucoes):
+    """Cada execução do yt-dlp usa o próximo par (linhas, código de saída)."""
+    restantes = list(execucoes)
+    chamadas = []
+
+    def executar(comando, **opcoes):
+        chamadas.append(comando)
+        return ProcessoFalso(*restantes.pop(0))
+
+    monkeypatch.setattr(download.subprocess, "Popen", executar)
+    return chamadas
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_falha_por_versao_antiga_atualiza_e_baixa_na_segunda_tentativa(
+    monkeypatch, atualizacoes
+):
+    atualizacoes.resultado = True
+    chamadas = simular_execucoes(
+        monkeypatch, ([ERRO_403], 1), (["[baixador-arquivo]aula.mp4\n"], 0)
+    )
+    recebidos = []
+
+    arquivo = baixar(LINK, ao_progredir=recebidos.append)
+
+    assert arquivo == Path("aula.mp4")
+    assert chamadas == [montar_comando(LINK)] * 2
+    assert atualizacoes.pedidos == 1
+    assert recebidos == [Progresso(ETAPA_ATUALIZANDO)]
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_sem_versao_nova_o_erro_original_aparece_sem_nova_tentativa(
+    monkeypatch, atualizacoes
+):
+    chamadas = simular_execucoes(monkeypatch, ([ERRO_403], 1))
+
+    with pytest.raises(FalhaNoDownload, match="erro 403"):
+        baixar(LINK)
+
+    assert len(chamadas) == 1
+    assert atualizacoes.pedidos == 1
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_se_a_versao_nova_tambem_falha_nao_ha_terceira_tentativa(
+    monkeypatch, atualizacoes
+):
+    atualizacoes.resultado = True
+    chamadas = simular_execucoes(
+        monkeypatch,
+        ([ERRO_403], 1),
+        (["ERROR: [youtube] abc: This video is unavailable\n"], 1),
+    )
+
+    # Vale o erro da versão nova, que é o mais confiável.
+    with pytest.raises(FalhaNoDownload, match="não está disponível"):
+        baixar(LINK)
+
+    assert len(chamadas) == 2
+    assert atualizacoes.pedidos == 1
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_erro_sem_relacao_com_a_versao_nao_tenta_atualizar(monkeypatch, atualizacoes):
+    atualizacoes.resultado = True
+    chamadas = simular_execucoes(
+        monkeypatch, (["ERROR: unable to write data: [Errno 28] No space left\n"], 1)
+    )
+
+    with pytest.raises(FalhaNoDownload, match="espaço"):
+        baixar(LINK)
+
+    assert len(chamadas) == 1
+    assert atualizacoes.pedidos == 0
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_download_cancelado_nao_tenta_atualizar(monkeypatch, atualizacoes):
+    cancelamento = Cancelamento()
+    processo = ProcessoFalso(linhas_com_cancelamento(cancelamento), 1)
+    monkeypatch.setattr(download.subprocess, "Popen", lambda comando, **opcoes: processo)
+
+    with pytest.raises(DownloadCancelado):
+        baixar(LINK, cancelamento=cancelamento)
+
+    assert atualizacoes.pedidos == 0
+
+
+def simular_yt_dlp(monkeypatch, versoes, ao_atualizar=None):
+    """Troca o subprocess.run: cada --version devolve a próxima versão da lista."""
+    restantes = list(versoes)
+    comandos = []
+
+    def executar(comando, **opcoes):
+        comandos.append(comando)
+        if comando == ["yt-dlp", "--version"]:
+            return subprocess.CompletedProcess(comando, 0, stdout=restantes.pop(0))
+        if ao_atualizar is not None:
+            raise ao_atualizar
+        return subprocess.CompletedProcess(comando, 0)
+
+    monkeypatch.setattr(download.subprocess, "run", executar)
+    return comandos
+
+
+def test_atualizacao_que_muda_a_versao_conta_como_feita(monkeypatch):
+    comandos = simular_yt_dlp(monkeypatch, ["2026.08.17\n", "2026.11.08\n"])
+
+    assert atualizar_de_verdade()
+    assert ["yt-dlp", "--update"] in comandos
+
+
+@pytest.mark.parametrize(
+    "versoes",
+    [
+        # Já estava na versão mais recente, ou o yt-dlp se recusou a atualizar.
+        ["2026.11.08\n", "2026.11.08\n"],
+        # Não foi possível ler a versão depois: não dá para afirmar que mudou.
+        ["2026.08.17\n", ""],
+    ],
+)
+def test_atualizacao_que_nao_muda_a_versao_nao_conta(monkeypatch, versoes):
+    simular_yt_dlp(monkeypatch, versoes)
+
+    assert not atualizar_de_verdade()
+
+
+@pytest.mark.parametrize(
+    "problema",
+    [subprocess.TimeoutExpired("yt-dlp", 180), OSError("yt-dlp sumiu")],
+)
+def test_atualizacao_que_trava_ou_quebra_nao_conta_nem_levanta(monkeypatch, problema):
+    simular_yt_dlp(monkeypatch, ["2026.08.17\n"], ao_atualizar=problema)
+
+    assert not atualizar_de_verdade()

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from baixador.erros import traduzir_erro
+from baixador.erros import atualizar_pode_resolver, traduzir_erro
 
 # O ffprobe acompanha o ffmpeg, e o yt-dlp precisa dele para extrair o áudio.
 PROGRAMAS_NECESSARIOS = ("yt-dlp", "ffmpeg", "ffprobe")
@@ -31,6 +31,7 @@ FORMATOS_COM_QUALIDADE = ("mp4",)
 
 ETAPA_BAIXANDO = "baixando"
 ETAPA_PROCESSANDO = "processando"
+ETAPA_ATUALIZANDO = "atualizando"
 
 # Marcam as linhas que o programa pediu ao yt-dlp, para separá-las do resto da saída.
 MARCA_PROGRESSO = "[baixador-progresso]"
@@ -53,8 +54,17 @@ VALORES_DESCONHECIDOS = ("NA", "Unknown")
 SEM_JANELA_DE_TERMINAL = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+# A atualização baixa o executável inteiro do yt-dlp, de algumas dezenas de MB.
+SEGUNDOS_PARA_ATUALIZAR = 180
+SEGUNDOS_PARA_LER_A_VERSAO = 30
+
+
 class FalhaNoDownload(RuntimeError):
     """O download não pôde ser iniciado ou não terminou com sucesso."""
+
+    def __init__(self, mensagem: str, atualizar_pode_resolver: bool = False):
+        super().__init__(mensagem)
+        self.atualizar_pode_resolver = atualizar_pode_resolver
 
 
 class DownloadCancelado(Exception):
@@ -187,6 +197,42 @@ def montar_comando(
     ]
 
 
+def versao_do_yt_dlp() -> str | None:
+    try:
+        resultado = subprocess.run(
+            ["yt-dlp", "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=SEGUNDOS_PARA_LER_A_VERSAO,
+            creationflags=SEM_JANELA_DE_TERMINAL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return resultado.stdout.strip() or None
+
+
+def atualizar_yt_dlp() -> bool:
+    """Pede ao yt-dlp que se atualize e devolve se a versão mudou.
+
+    Comparar a versão antes e depois dispensa interpretar o texto do yt-dlp e
+    cobre todos os casos em que nada muda: já atualizado, sem internet ou
+    instalado pelo pip, quando o próprio yt-dlp se recusa a se atualizar.
+    """
+    antes = versao_do_yt_dlp()
+    try:
+        subprocess.run(
+            ["yt-dlp", "--update"],
+            capture_output=True,
+            timeout=SEGUNDOS_PARA_ATUALIZAR,
+            creationflags=SEM_JANELA_DE_TERMINAL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    depois = versao_do_yt_dlp()
+    return depois is not None and depois != antes
+
+
 def baixar(
     link: str,
     formato: str = FORMATO_PADRAO,
@@ -200,12 +246,36 @@ def baixar(
     Salva na pasta indicada ou, sem ela, na atual. A interface recebe o andamento
     por ao_progredir, então este módulo não precisa saber se é terminal ou janela.
     Se outra thread chamar cancelamento.cancelar(), levanta DownloadCancelado.
+
+    Se a falha puder ser causada por um yt-dlp desatualizado, atualiza-o e tenta
+    mais uma vez antes de desistir.
     """
     avisar = ao_progredir or (lambda progresso: None)
     for programa in PROGRAMAS_NECESSARIOS:
         if shutil.which(programa) is None:
             raise FalhaNoDownload(f"O programa {programa} não foi encontrado no PATH.")
 
+    comando = montar_comando(link, formato, qualidade, pasta)
+    try:
+        return _executar(comando, avisar, cancelamento)
+    except FalhaNoDownload as falha:
+        if not falha.atualizar_pode_resolver:
+            raise
+        avisar(Progresso(ETAPA_ATUALIZANDO))
+        # Se a versão não mudou, tentar de novo daria o mesmo erro.
+        if not atualizar_yt_dlp():
+            raise
+
+    # Uma única nova tentativa: se a versão nova também falhar, o motivo é outro.
+    return _executar(comando, avisar, cancelamento)
+
+
+def _executar(
+    comando: list[str],
+    avisar: Callable[[Progresso], None],
+    cancelamento: Cancelamento | None,
+) -> Path | None:
+    """Roda o yt-dlp uma vez, acompanhando a saída dele."""
     arquivo = None
     erro = None
     processando = False
@@ -213,7 +283,7 @@ def baixar(
     # O stderr vai para o mesmo tubo: ler dois tubos em sequência poderia travar,
     # com o yt-dlp esperando que o tubo cheio fosse lido.
     with subprocess.Popen(
-        montar_comando(link, formato, qualidade, pasta),
+        comando,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         encoding="utf-8",
@@ -249,7 +319,10 @@ def baixar(
         if cancelamento is not None and cancelamento.pedido:
             raise DownloadCancelado
         if erro is not None:
-            raise FalhaNoDownload(traduzir_erro(erro))
-        raise FalhaNoDownload(f"O yt-dlp terminou com o código {processo.returncode}.")
+            raise FalhaNoDownload(traduzir_erro(erro), atualizar_pode_resolver(erro))
+        raise FalhaNoDownload(
+            f"O yt-dlp terminou com o código {processo.returncode}.",
+            atualizar_pode_resolver=True,
+        )
 
     return arquivo

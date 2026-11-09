@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from baixador import __version__
 from baixador.download import (
+    ETAPA_ATUALIZANDO,
     ETAPA_PROCESSANDO,
     FORMATO_PADRAO,
     FORMATOS,
@@ -65,6 +66,8 @@ def usar_utf8_na_saida() -> None:
 def formatar_progresso(progresso: Progresso) -> str:
     if progresso.etapa == ETAPA_PROCESSANDO:
         return "Processando o arquivo..."
+    if progresso.etapa == ETAPA_ATUALIZANDO:
+        return "O download falhou. Atualizando o yt-dlp para tentar de novo..."
 
     partes = ["Baixando"]
     if progresso.percentual is not None:

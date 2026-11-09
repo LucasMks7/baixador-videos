@@ -7,6 +7,7 @@ import pytest
 from baixador import __version__, cli
 from baixador.cli import main
 from baixador.download import (
+    ETAPA_ATUALIZANDO,
     ETAPA_BAIXANDO,
     ETAPA_PROCESSANDO,
     QUALIDADES,
@@ -181,6 +182,10 @@ def test_mostra_o_caminho_do_arquivo_final(capsys, monkeypatch):
         (Progresso(ETAPA_BAIXANDO, 100.0), "Baixando 100.0%"),
         (Progresso(ETAPA_BAIXANDO), "Baixando"),
         (Progresso(ETAPA_PROCESSANDO), "Processando o arquivo..."),
+        (
+            Progresso(ETAPA_ATUALIZANDO),
+            "O download falhou. Atualizando o yt-dlp para tentar de novo...",
+        ),
     ],
 )
 def test_formata_o_progresso(progresso, esperado):

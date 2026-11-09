@@ -79,18 +79,25 @@ Uma barra mostra o andamento, com a velocidade e o tempo restante. O botão **Ca
 
 ## Se algo der errado
 
-Os erros mais comuns do yt-dlp são traduzidos para mensagens em português, tanto no terminal quanto na janela. Dois casos merecem atenção:
+Os erros mais comuns do yt-dlp são traduzidos para mensagens em português, tanto no terminal quanto na janela.
 
-- **"O site recusou o download (erro 403)"** ou um vídeo público que aparece como indisponível: os sites mudam com frequência, e o yt-dlp precisa acompanhar. Atualize-o com `winget upgrade yt-dlp.yt-dlp` e tente de novo.
-- **"O acesso a este vídeo foi negado"**: o vídeo é privado, exige login ou tem restrição de região. O programa não contorna esses bloqueios, nem proteção por DRM.
+### yt-dlp desatualizado
+
+Os sites mudam com frequência, e um yt-dlp de poucos meses começa a falhar em vídeos públicos, com erro 403 ou "vídeo indisponível". O programa trata isso sozinho: quando o download falha por um motivo que uma versão antiga pode causar, ele pede ao yt-dlp que se atualize (`yt-dlp --update`) e, se a versão mudou, tenta o download mais uma vez. Erros que uma versão nova não resolveria, como falta de internet ou de espaço no disco, não disparam a atualização.
+
+A atualização automática funciona com o executável oficial do yt-dlp, que é o que o winget instala. Se o yt-dlp foi instalado pelo pip ou por outro gerenciador de pacotes, ele se recusa a se atualizar sozinho; nesse caso, atualize-o pelo mesmo gerenciador.
+
+### Acesso negado
+
+**"O acesso a este vídeo foi negado"** significa que o vídeo é privado, exige login ou tem restrição de região. O programa não contorna esses bloqueios, nem proteção por DRM.
 
 ## Como funciona
 
 | Módulo | Responsabilidade |
 | --- | --- |
 | `validacao.py` | Confere o link e prepara a pasta de destino, sem acessar a rede |
-| `download.py` | Monta o comando do yt-dlp, lê o progresso da saída dele e permite cancelar |
-| `erros.py` | Traduz os erros do yt-dlp em mensagens claras |
+| `download.py` | Monta o comando do yt-dlp, lê o progresso da saída dele, permite cancelar e atualiza o yt-dlp quando preciso |
+| `erros.py` | Traduz os erros do yt-dlp em mensagens claras e separa os que uma atualização pode resolver |
 | `cli.py` | Linha de comando |
 | `janela.py` | Janela em Tkinter |
 
