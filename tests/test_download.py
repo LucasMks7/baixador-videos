@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from baixador.download import (
     ETAPA_BAIXANDO,
     ETAPA_PROCESSANDO,
     FORMATOS,
+    Cancelamento,
+    DownloadCancelado,
     FalhaNoDownload,
     Progresso,
     baixar,
@@ -16,6 +19,14 @@ from baixador.download import (
 )
 
 LINK = "https://exemplo.com/video"
+
+encerrar_de_verdade = download.encerrar
+
+
+@pytest.fixture(autouse=True)
+def encerrar_sem_taskkill(monkeypatch):
+    """Os processos falsos não têm PID; o taskkill só roda no teste que o cobre."""
+    monkeypatch.setattr(download, "encerrar", lambda processo: processo.kill())
 
 
 @pytest.fixture
@@ -234,3 +245,90 @@ def test_programa_ausente_vira_falha_sem_executar_nada(monkeypatch, ausente):
         baixar(LINK)
 
     assert chamadas == []
+
+
+def linhas_com_cancelamento(cancelamento):
+    """Imita o yt-dlp sendo encerrado no meio: a saída acaba logo depois do pedido."""
+    yield "[baixador-progresso]10.0|NA|NA\n"
+    cancelamento.cancelar()
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_cancelar_encerra_o_yt_dlp_e_vira_download_cancelado(monkeypatch):
+    cancelamento = Cancelamento()
+    processo = ProcessoFalso(linhas_com_cancelamento(cancelamento), 1)
+    monkeypatch.setattr(download.subprocess, "Popen", lambda comando, **opcoes: processo)
+
+    with pytest.raises(DownloadCancelado):
+        baixar(LINK, cancelamento=cancelamento)
+
+    assert processo.encerrado
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_cancelar_antes_de_o_yt_dlp_abrir_encerra_assim_que_ele_abre(monkeypatch):
+    cancelamento = Cancelamento()
+    cancelamento.cancelar()
+    processo = ProcessoFalso([], 1)
+    monkeypatch.setattr(download.subprocess, "Popen", lambda comando, **opcoes: processo)
+
+    with pytest.raises(DownloadCancelado):
+        baixar(LINK, cancelamento=cancelamento)
+
+    assert processo.encerrado
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_download_que_terminou_antes_do_cancelamento_devolve_o_arquivo(monkeypatch):
+    cancelamento = Cancelamento()
+
+    def linhas():
+        yield "[baixador-arquivo]aula.mp4\n"
+        cancelamento.cancelar()
+
+    processo = ProcessoFalso(linhas(), 0)
+    monkeypatch.setattr(download.subprocess, "Popen", lambda comando, **opcoes: processo)
+
+    assert baixar(LINK, cancelamento=cancelamento) == Path("aula.mp4")
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_cancelar_depois_do_fim_nao_mexe_no_processo(monkeypatch):
+    cancelamento = Cancelamento()
+    processo = ProcessoFalso([], 0)
+    monkeypatch.setattr(download.subprocess, "Popen", lambda comando, **opcoes: processo)
+
+    baixar(LINK, cancelamento=cancelamento)
+    cancelamento.cancelar()
+
+    assert not processo.encerrado
+
+
+@pytest.mark.usefixtures("programas_instalados")
+def test_falha_sem_pedido_de_cancelamento_continua_sendo_falha(monkeypatch):
+    simular_execucao(monkeypatch, codigo_de_saida=1)
+
+    with pytest.raises(FalhaNoDownload):
+        baixar(LINK, cancelamento=Cancelamento())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a árvore só é encerrada no Windows")
+def test_encerrar_leva_tambem_os_processos_filhos():
+    """Roda processos reais: o filho faz o papel do ffmpeg aberto pelo yt-dlp."""
+    pai = (
+        "import subprocess, sys, time;"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],"
+        " stdout=sys.stdout);"
+        "print('pronto', flush=True);"
+        "time.sleep(30)"
+    )
+    processo = subprocess.Popen(
+        [sys.executable, "-c", pai], stdout=subprocess.PIPE, encoding="utf-8"
+    )
+    assert processo.stdout.readline() == "pronto\n"
+
+    encerrar_de_verdade(processo)
+
+    # O filho herdou a saída do pai: a leitura só termina quando os dois morrem.
+    # Com o filho vivo, isto estouraria o tempo.
+    processo.communicate(timeout=10)

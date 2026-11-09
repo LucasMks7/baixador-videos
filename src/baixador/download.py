@@ -2,6 +2,8 @@
 
 import shutil
 import subprocess
+import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +55,60 @@ SEM_JANELA_DE_TERMINAL = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 class FalhaNoDownload(RuntimeError):
     """O download não pôde ser iniciado ou não terminou com sucesso."""
+
+
+class DownloadCancelado(Exception):
+    """O download foi interrompido a pedido de quem usa o programa."""
+
+
+def encerrar(processo: subprocess.Popen) -> None:
+    """Encerra o yt-dlp e, no Windows, também os programas que ele abriu."""
+    if sys.platform == "win32":
+        # O kill() do Windows encerra só o yt-dlp: o ffmpeg que ele abriu seguiria
+        # rodando e gravando no disco. O /T leva a árvore inteira de processos.
+        subprocess.run(
+            ["taskkill", "/PID", str(processo.pid), "/T", "/F"],
+            capture_output=True,
+            creationflags=SEM_JANELA_DE_TERMINAL,
+        )
+    # Garante o encerramento se o taskkill falhar; com o processo já morto, não faz nada.
+    processo.kill()
+
+
+class Cancelamento:
+    """Permite que outra thread interrompa um download em andamento.
+
+    A leitura da saída do yt-dlp bloqueia até chegar uma linha, então não basta
+    marcar um aviso e conferi-lo de vez em quando: é encerrar o processo que
+    destrava a leitura.
+    """
+
+    def __init__(self) -> None:
+        # Quem cancela e quem baixa estão em threads diferentes.
+        self._trava = threading.Lock()
+        self._processo: subprocess.Popen | None = None
+        self._pedido = False
+
+    @property
+    def pedido(self) -> bool:
+        return self._pedido
+
+    def cancelar(self) -> None:
+        with self._trava:
+            self._pedido = True
+            if self._processo is not None:
+                encerrar(self._processo)
+
+    def _acompanhar(self, processo: subprocess.Popen) -> None:
+        with self._trava:
+            self._processo = processo
+            # O pedido pode ter chegado antes de o processo existir.
+            if self._pedido:
+                encerrar(processo)
+
+    def _soltar(self) -> None:
+        with self._trava:
+            self._processo = None
 
 
 @dataclass(frozen=True)
@@ -137,11 +193,13 @@ def baixar(
     qualidade: str = QUALIDADE_PADRAO,
     pasta: Path | None = None,
     ao_progredir: Callable[[Progresso], None] | None = None,
+    cancelamento: Cancelamento | None = None,
 ) -> Path | None:
     """Baixa o item e devolve o caminho do arquivo final, ou levanta FalhaNoDownload.
 
     Salva na pasta indicada ou, sem ela, na atual. A interface recebe o andamento
     por ao_progredir, então este módulo não precisa saber se é terminal ou janela.
+    Se outra thread chamar cancelamento.cancelar(), levanta DownloadCancelado.
     """
     avisar = ao_progredir or (lambda progresso: None)
     for programa in PROGRAMAS_NECESSARIOS:
@@ -162,6 +220,8 @@ def baixar(
         errors="replace",
         creationflags=SEM_JANELA_DE_TERMINAL,
     ) as processo:
+        if cancelamento is not None:
+            cancelamento._acompanhar(processo)
         try:
             for linha in processo.stdout:
                 linha = linha.rstrip("\r\n")
@@ -178,10 +238,16 @@ def baixar(
                     erro = linha
         except BaseException:
             # Inclui o Ctrl+C: sem isto, o yt-dlp continuaria baixando sozinho.
-            processo.kill()
+            encerrar(processo)
             raise
+        finally:
+            if cancelamento is not None:
+                cancelamento._soltar()
 
     if processo.returncode != 0:
+        # Se o download terminou bem antes de o pedido fazer efeito, vale o arquivo.
+        if cancelamento is not None and cancelamento.pedido:
+            raise DownloadCancelado
         if erro is not None:
             raise FalhaNoDownload(traduzir_erro(erro))
         raise FalhaNoDownload(f"O yt-dlp terminou com o código {processo.returncode}.")

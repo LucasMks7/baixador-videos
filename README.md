@@ -49,6 +49,8 @@ baixar-janela
 
 Abre uma janela com os mesmos campos da linha de comando: link, formato, qualidade e pasta de destino, que começa na pasta Downloads. A janela usa o mesmo código de download do comando `baixar` e continua respondendo enquanto o download acontece.
 
+Uma barra mostra o andamento, com a velocidade e o tempo restante. O botão **Cancelar** interrompe o download, e fechar a janela faz o mesmo. Como no `Ctrl+C`, o arquivo parcial (`.part`) fica na pasta de destino.
+
 ## Desenvolvimento
 
 Requer Python 3.10 ou superior.

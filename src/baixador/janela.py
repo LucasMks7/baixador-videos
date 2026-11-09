@@ -8,13 +8,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, ttk
 
+# O texto do progresso é o mesmo do terminal.
+from baixador.cli import formatar_progresso
 from baixador.download import (
+    ETAPA_BAIXANDO,
     FORMATO_PADRAO,
     FORMATOS,
     FORMATOS_COM_QUALIDADE,
     QUALIDADE_PADRAO,
     QUALIDADES,
+    Cancelamento,
+    DownloadCancelado,
     FalhaNoDownload,
+    Progresso,
     baixar,
 )
 from baixador.validacao import (
@@ -28,7 +34,9 @@ from baixador.validacao import (
 INTERVALO_DA_FILA_MS = 100
 
 TEXTO_INICIAL = "Cole o link e clique em Baixar."
-TEXTO_BAIXANDO = "Baixando... A janela avisa quando terminar."
+TEXTO_PREPARANDO = "Preparando o download..."
+TEXTO_CANCELANDO = "Cancelando..."
+TEXTO_CANCELADO = "Download cancelado."
 
 
 @dataclass(frozen=True)
@@ -65,15 +73,28 @@ def preparar_pedido(link: str, formato: str, qualidade: str, pasta: str) -> Pedi
     return Pedido(link, formato, qualidade, preparar_pasta(pasta))
 
 
-def executar(pedido: Pedido, avisar: Callable[[Resultado], None]) -> None:
-    """Faz o download e avisa o resultado. Roda fora da thread da janela."""
+def executar(
+    pedido: Pedido,
+    avisar: Callable[[Progresso | Resultado], None],
+    cancelamento: Cancelamento,
+) -> None:
+    """Faz o download, avisando o andamento e o resultado. Roda fora da thread da janela."""
     try:
-        arquivo = baixar(pedido.link, pedido.formato, pedido.qualidade, pedido.pasta)
+        arquivo = baixar(
+            pedido.link,
+            pedido.formato,
+            pedido.qualidade,
+            pedido.pasta,
+            ao_progredir=avisar,
+            cancelamento=cancelamento,
+        )
+    except DownloadCancelado:
+        avisar(Resultado(False, TEXTO_CANCELADO))
     except FalhaNoDownload as erro:
         avisar(Resultado(False, f"Erro: {erro}"))
     except Exception as erro:
         # Sem isto, um erro imprevisto mataria a thread em silêncio e a janela
-        # ficaria em "Baixando..." para sempre.
+        # ficaria esperando para sempre.
         avisar(Resultado(False, f"Erro inesperado: {erro}"))
     else:
         destino = pedido.pasta if arquivo is None else arquivo
@@ -87,8 +108,10 @@ class Janela:
         self.raiz = raiz
         # O Tkinter só pode ser usado pela thread que o criou. A thread de trabalho
         # deixa as mensagens nesta fila, e a janela as lê de tempos em tempos.
-        self.fila: queue.Queue[Resultado] = queue.Queue()
+        self.fila: queue.Queue[Progresso | Resultado] = queue.Queue()
         self.thread: threading.Thread | None = None
+        self.cancelamento = Cancelamento()
+        self.barra_em_vaivem = False
 
         self.link = tk.StringVar()
         self.formato = tk.StringVar(value=FORMATO_PADRAO)
@@ -98,6 +121,8 @@ class Janela:
 
         raiz.title("Baixador de vídeos")
         raiz.resizable(False, False)
+        # Fechar a janela no meio de um download também precisa encerrar o yt-dlp.
+        raiz.protocol("WM_DELETE_WINDOW", self.fechar)
         self._montar()
         self._ajustar_qualidade()
 
@@ -138,11 +163,20 @@ class Janela:
             row=2, column=3, sticky="e", padx=(8, 0)
         )
 
-        self.botao_baixar = ttk.Button(quadro, text="Baixar", command=self.iniciar)
-        self.botao_baixar.grid(row=3, column=0, columnspan=4, pady=(8, 4))
+        botoes = ttk.Frame(quadro)
+        botoes.grid(row=3, column=0, columnspan=4, pady=(8, 4))
+        self.botao_baixar = ttk.Button(botoes, text="Baixar", command=self.iniciar)
+        self.botao_baixar.grid(row=0, column=0, padx=4)
+        self.botao_cancelar = ttk.Button(
+            botoes, text="Cancelar", command=self.cancelar, state="disabled"
+        )
+        self.botao_cancelar.grid(row=0, column=1, padx=4)
+
+        self.barra = ttk.Progressbar(quadro, maximum=100)
+        self.barra.grid(row=4, column=0, columnspan=4, sticky="ew", pady=4)
 
         ttk.Label(quadro, textvariable=self.situacao, wraplength=440).grid(
-            row=4, column=0, columnspan=4, sticky="w"
+            row=5, column=0, columnspan=4, sticky="w"
         )
 
         quadro.columnconfigure(0, minsize=64)
@@ -179,12 +213,18 @@ class Janela:
             self.situacao.set(f"Erro: {erro}")
             return
 
-        self.situacao.set(TEXTO_BAIXANDO)
+        self.situacao.set(TEXTO_PREPARANDO)
         self.botao_baixar.configure(state="disabled")
+        self.botao_cancelar.configure(state="normal")
+        self._definir_barra(None)
+        # Um por download: o pedido de cancelar um não pode valer para o seguinte.
+        self.cancelamento = Cancelamento()
         # Em outra thread porque o download bloqueia: na thread da janela, ela
         # pararia de responder. daemon=True não segura o programa aberto ao fechar.
         self.thread = threading.Thread(
-            target=executar, args=(pedido, self.fila.put), daemon=True
+            target=executar,
+            args=(pedido, self.fila.put, self.cancelamento),
+            daemon=True,
         )
         self.thread.start()
         self.raiz.after(INTERVALO_DA_FILA_MS, self.ler_fila)
@@ -197,17 +237,64 @@ class Janela:
         """Aplica na janela as mensagens deixadas pela thread de trabalho."""
         try:
             while True:
-                self._terminar(self.fila.get_nowait())
+                mensagem = self.fila.get_nowait()
+                if isinstance(mensagem, Resultado):
+                    self._terminar(mensagem)
+                else:
+                    self._mostrar_progresso(mensagem)
         except queue.Empty:
             pass
 
         if self.baixando:
             self.raiz.after(INTERVALO_DA_FILA_MS, self.ler_fila)
 
+    def _mostrar_progresso(self, progresso: Progresso) -> None:
+        # Depois do pedido, o progresso que ainda estava na fila não interessa mais.
+        if self.cancelamento.pedido:
+            return
+
+        # O terminal alinha os números com espaços, que sobram na fonte da janela.
+        self.situacao.set(" ".join(formatar_progresso(progresso).split()))
+        if progresso.etapa == ETAPA_BAIXANDO:
+            self._definir_barra(progresso.percentual)
+        else:
+            self._definir_barra(None)
+
+    def _definir_barra(self, percentual: float | None) -> None:
+        """Sem percentual, a barra fica em vaivém: há trabalho, mas não se sabe quanto."""
+        em_vaivem = percentual is None
+        if em_vaivem != self.barra_em_vaivem:
+            self.barra_em_vaivem = em_vaivem
+            if em_vaivem:
+                self.barra.configure(mode="indeterminate")
+                self.barra.start()
+            else:
+                self.barra.stop()
+                self.barra.configure(mode="determinate")
+        if not em_vaivem:
+            self.barra.configure(value=percentual)
+
     def _terminar(self, resultado: Resultado) -> None:
         self.thread = None
         self.situacao.set(resultado.texto)
+        self._definir_barra(100 if resultado.sucesso else 0)
         self.botao_baixar.configure(state="normal")
+        self.botao_cancelar.configure(state="disabled")
+
+    def cancelar(self) -> None:
+        """Pede o cancelamento; o resultado chega pela fila, como qualquer outro."""
+        if not self.baixando:
+            return
+
+        self.botao_cancelar.configure(state="disabled")
+        self.situacao.set(TEXTO_CANCELANDO)
+        self._definir_barra(None)
+        self.cancelamento.cancelar()
+
+    def fechar(self) -> None:
+        if self.baixando:
+            self.cancelamento.cancelar()
+        self.raiz.destroy()
 
 
 def main() -> None:
